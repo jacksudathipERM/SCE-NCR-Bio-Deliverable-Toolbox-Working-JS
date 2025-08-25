@@ -11,13 +11,17 @@ WORKING_SCRATCH = r"M:\US\Projects\S-U\SoCal_Edison\SCE ESD Construction Support
 BIO_SPECIES_POINTS = rf"{WORKING_GDB}\BioSpecies_Points"
 BIRD_NESTS_POINTS  = rf"{WORKING_GDB}\Bird_Nests_Points"
 
-# “Export” staging tables produced by models #1/#2 and consumed by #1/#4 appends
+# “Export” staging tables produced by models #1/#
+#2 and consumed by #1/#4 appends
 BIO_SPECIES_EXPORT   = rf"{WORKING_GDB}\BioSpecies_Export"
 BIRD_NESTPOINTS_EXPORT = rf"{WORKING_GDB}\BirdNestPoints_Export"
 
 # Feature service layer paths for BSP export (update to whatever you actually point to in Pro)
 BSP_FS_2025 = r"0602981_EnvClearanceScope_VM_BirdandBioPoints_2025\BioSpecies_Points_2025"
 BSP_FS_2024 = r"https:\\services1.arcgis.com\Sh1QwLSVKYk2AYjx\arcgis\rest\services\0602981_EnvClearanceScope_VM_BirdandBioPoints_2024\FeatureServer\1"
+#BNP paths
+BNP_PARENT_URL = r"Add In"
+BNP_CHILD_URL  = r"Add In"
 
 arcpy.env.overwriteOutput = False
 
@@ -47,6 +51,36 @@ def _calc_geometry_utm11(in_fc: str):
 
 def _calc_copy_field(in_table: str, out_field: str, expr: str, expr_type="PYTHON3"):
     arcpy.management.CalculateField(in_table=in_table, field=out_field, expression=expr, expression_type=expr_type)
+
+
+"""New helper function for BNP export and join"""
+def ExportAndJoinBNPFeatureService(parent_url, child_url, out_fc_path):
+    """Export BNP parent and related child table from Feature Service, join them, and save to GDB."""
+    arcpy.AddMessage("Exporting BNP parent and child tables from feature service...")
+
+    temp_parent = "in_memory\\bnp_parent"
+    temp_child = "in_memory\\bnp_child"
+
+    # Export parent
+    arcpy.AddMessage("Exporting BNP parent layer...")
+    arcpy.conversion.FeatureClassToFeatureClass(parent_url, "in_memory", "bnp_parent")
+
+    # Export related child table
+    arcpy.AddMessage("Exporting BNP related child table...")
+    arcpy.conversion.TableToTable(child_url, "in_memory", "bnp_child")
+
+    # Join on GlobalID (parent) to ParentGlobalID (child) - adjust these field names if needed
+    arcpy.AddMessage("Joining BNP parent and child on GlobalID...")
+    arcpy.management.AddJoin(temp_parent, "GlobalID", temp_child, "ParentGlobalID", "KEEP_COMMON")
+
+    # Export joined result to working GDB export FC
+    arcpy.AddMessage(f"Exporting joined BNP to: {out_fc_path}")
+    arcpy.conversion.FeatureClassToFeatureClass(temp_parent, os.path.dirname(out_fc_path), os.path.basename(out_fc_path))
+
+    # Clean up join (optional)
+    arcpy.management.RemoveJoin(temp_parent)
+
+    arcpy.AddMessage("BNP export and join complete.")
 
 
 # =============================================================================
@@ -104,14 +138,29 @@ class ExportBNPAndCalculate(object):
                 )
 
             # Append Bird Nest Points Export → Bird_Nests_Points
-            arcpy.AddMessage("Appending BirdNestPoints_Export → Bird_Nests_Points ...")
+            # arcpy.AddMessage("Appending BirdNestPoints_Export → Bird_Nests_Points ...")
+            # with arcpy.EnvManager(maintainAttachments=False):
+            #     arcpy.management.Append(
+            #         inputs=[BIRD_NESTPOINTS_EXPORT],
+            #         target=BIRD_NESTS_POINTS,
+            #         schema_type="NO_TEST",
+            #         field_mapping=BNP_APPEND_FIELD_MAPPING
+            #     )
+            # Define the feature service URLs for BNP parent and child
+
+            # Export and join BNP FS layers into BIRD_NESTPOINTS_EXPORT
+            ExportAndJoinBNPFeatureService(BNP_PARENT_URL, BNP_CHILD_URL, BIRD_NESTPOINTS_EXPORT)
+
+            # Now append joined output to target
+            arcpy.AddMessage("Appending joined BNP export → Bird_Nests_Points ...")
             with arcpy.EnvManager(maintainAttachments=False):
                 arcpy.management.Append(
                     inputs=[BIRD_NESTPOINTS_EXPORT],
                     target=BIRD_NESTS_POINTS,
                     schema_type="NO_TEST",
                     field_mapping=BNP_APPEND_FIELD_MAPPING
-                )
+    )
+
 
         arcpy.AddMessage("Export BNP and Calculate — complete.")
 
@@ -192,6 +241,7 @@ class ExportBSPFS(object):
             _calc_copy_field(BIO_SPECIES_EXPORT, "LEAD_MON", "'Alessandra Phelan-Roberts'", expr_type="ARCADE")
 
         arcpy.AddMessage("Export BSP FS — complete.")
+
 
 
 # -----------------------------------------------------------------------------
